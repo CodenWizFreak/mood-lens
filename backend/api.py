@@ -161,8 +161,49 @@ RULES:
 5. If permanent unlearning fired this turn, acknowledge it explicitly:
    "Got it — I've permanently removed those from your graph (LightGCN embedding shifted)."
 6. If the user is in a mood session, gently distinguish session likes from permanent preferences.
-7. NEVER claim to remember or reference a previous mood session that is not currently active. If asked "do you remember my previous mood?" and no mood is active, say you don't have that session in memory anymore.
+7. NEVER claim to remember or reference a previous mood session that is not currently active. If asked "do you remember my previous mood?" or "what is my current mood?" when no mood is active, say you don't have that session in memory anymore.
+8. If the user asks about their current mood, profile, liked movies, or blocked movies, ONLY use the data provided in the PROFILE section above. Do NOT invent or guess.
 """
+
+def build_meta_response(state: dict, session_mood: str | None, session_interactions: list) -> str:
+    """Fully deterministic answer to profile/state meta questions. No LLM involved."""
+    liked = [m.get("title") if isinstance(m, dict) else str(m) for m in state.get("liked_movies", [])]
+    blocked_movies = [m.get("title") if isinstance(m, dict) else str(m) for m in state.get("blocked_movies", [])]
+    disliked_movies = state.get("disliked_movies", [])
+    blocked_genres = state.get("blocked_genres", []) or state.get("disliked_genres", [])
+    genre_weights = state.get("genre_weights", {})
+    top_genres = sorted(
+        [(g, w) for g, w in genre_weights.items() if w > 1.0],
+        key=lambda x: x[1], reverse=True
+    )[:3]
+
+    lines = []
+
+    if session_mood:
+        lines.append(f"**Current mood session:** {session_mood} ({len(session_interactions)} interactions so far — temporary, not yet saved to your profile).")
+    else:
+        lines.append("**Current mood session:** None active. Recommendations are based purely on your permanent profile.")
+
+    if liked:
+        lines.append(f"**Permanently liked movies:** {', '.join(liked)}.")
+    else:
+        lines.append("**Permanently liked movies:** None yet.")
+
+    if top_genres:
+        lines.append(f"**Your top taste signals:** {', '.join(f'{g} (weight {w:.2f})' for g, w in top_genres)}.")
+
+    if disliked_movies:
+        lines.append(f"**Soft-disliked (filtered from recs):** {', '.join(str(t) for t in disliked_movies)}.")
+
+    if blocked_movies or blocked_genres:
+        parts = []
+        if blocked_movies:
+            parts.append(f"movies: {', '.join(blocked_movies)}")
+        if blocked_genres:
+            parts.append(f"genres: {', '.join(blocked_genres)}")
+        lines.append(f"**Permanently blocked:** {'; '.join(parts)}.")
+
+    return "\n".join(lines)
 
 
 def format_reco_context(recs: list, intent: dict) -> str:
@@ -370,6 +411,35 @@ async def chat(req: ChatRequest):
             recent_history=conversation[-6:],
             user_state=mgr.preference_graph.state,
         )
+
+        # ── Meta query: answer deterministically, skip scoring + LLM ──────────
+        if intent.get("is_meta_query"):
+            meta_answer = build_meta_response(
+                mgr.preference_graph.state,
+                mgr.session_graph.state.get("detected_mood"),
+                mgr.session_graph.state.get("interactions", []),
+            )
+            yield (
+                "data: " + json.dumps({
+                    "type": "session",
+                    "active": mgr.session_graph.is_active(),
+                    "mood": mgr.session_graph.state.get("detected_mood"),
+                    "movie_count": len(mgr.session_graph.state.get("interactions", [])),
+                }) + "\n\n"
+            )
+            for line in meta_answer.split("\n"):
+                if line:
+                    yield f"data: {json.dumps({'type': 'token', 'content': line + chr(10)})}\n\n"
+                    await asyncio.sleep(0)
+            graph_data = build_viz_payload(
+                mgr.preference_graph, mgr.session_graph,
+                last_recommendations=mgr.preference_graph.state.get("last_recommendation_scores", {}),
+            )
+            yield f"data: {json.dumps({'type': 'graph', 'data': graph_data})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            conversation.append({"role": "user", "content": user_input})
+            conversation.append({"role": "assistant", "content": meta_answer})
+            return
 
         proc = mgr.process_intent(intent, movie_db)
 
