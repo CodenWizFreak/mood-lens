@@ -17,6 +17,7 @@ Output schema (identical from both paths):
     "disliked_genres":     ["Music"],
     "sentiment_last_recs": "negative" | "positive" | "neutral" | null,
     "wants_different":     false,
+    "is_meta_query":       false,
     "parse_method":        "llm" | "regex"
 }
 """
@@ -177,6 +178,29 @@ WANTS_DIFFERENT_PATTERNS = [
     r"\bcan(?:not|'t) you do better\b",
 ]
 
+META_QUERY_PATTERNS = [
+    # Current mood / session state
+    r"\b(?:what(?:'s| is)(?: my)? (?:current |active )?mood)\b",
+    r"\b(?:am i in a(?: \w+)? mood)\b",
+    r"\b(?:what mood am i in)\b",
+    r"\b(?:what(?:'s| is)(?: my)? (?:current |active )?session)\b",
+    # Profile / preference queries
+    r"\b(?:what(?:'s| have| do) (?:you know|i liked?|i watched?|i (?:permanently )?blocked?|my (?:profile|preferences?|taste|history)))\b",
+    r"\b(?:do you (?:remember|know) (?:me|my|what i))",
+    r"\b(?:what(?:'s)?(?: my)? (?:profile|preferences?|taste|history|liked movies?|blocked movies?))\b",
+    r"\b(?:show me my (?:profile|preferences?|taste|history|liked|blocked))\b",
+    r"\b(?:what have i (?:liked?|blocked?|watched?|disliked?))\b",
+    # System / how it works
+    r"\b(?:how (?:does|do) (?:this|the(?: recommendation)? system|moodlens) work)\b",
+    r"\b(?:what (?:is|are) (?:lightgcn|gnndelete|machine unlearning|tier 1|tier 2|embedding|influence functions?))\b",
+    r"\b(?:explain (?:the(?: memory| graph| system| recommendation| unlearning| tier)?))",
+]
+
+
+def _is_meta_query(text: str) -> bool:
+    lower = text.lower().strip()
+    return any(re.search(p, lower, re.IGNORECASE) for p in META_QUERY_PATTERNS)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  SECTION 2 — REGEX ENGINE (FALLBACK)
@@ -314,7 +338,6 @@ def _extract_directors_regex(text: str, movie_db: pd.DataFrame) -> list[str]:
             except IndexError:
                 continue
 
-    # Build director lookup from dataset
     dir_map: dict[str, str] = {}
     for dir_list in movie_db["directors_list"]:
         for name in (dir_list or []):
@@ -325,7 +348,6 @@ def _extract_directors_regex(text: str, movie_db: pd.DataFrame) -> list[str]:
     found, seen = [], set()
     for raw in raw_names:
         rl = raw.lower()
-        # Exact or partial match in director map
         for dl, dname in dir_map.items():
             if dl in seen:
                 continue
@@ -337,7 +359,6 @@ def _extract_directors_regex(text: str, movie_db: pd.DataFrame) -> list[str]:
 
 
 def _extract_plot_description(text: str) -> str:
-    """Return the best plot description captured from the text, or ''."""
     for pat in PLOT_DESCRIPTION_PATTERNS:
         m = re.search(pat, text, re.IGNORECASE)
         if m:
@@ -371,7 +392,7 @@ def _regex_parse(user_input: str, movie_db: pd.DataFrame) -> dict:
         if m and m not in disliked_found:
             disliked_found.append(m)
 
-    liked_genres = _extract_sentiment_genres(user_input, positive=True)
+    liked_genres    = _extract_sentiment_genres(user_input, positive=True)
     disliked_genres = _extract_sentiment_genres(user_input, positive=False)
     requested_genres = [
         genre for genre in _extract_genres(user_input)
@@ -390,26 +411,27 @@ def _regex_parse(user_input: str, movie_db: pd.DataFrame) -> dict:
                 continue
 
     permanent_genre_block = disliked_genres if is_permanent else []
-    permanent_movie_block = disliked_found if is_permanent else []
+    permanent_movie_block = disliked_found  if is_permanent else []
 
     result = {
-        "genres_requested":    requested_genres,
-        "actors_requested":    _extract_actors(user_input, movie_db),
-        "directors_requested": _extract_directors_regex(user_input, movie_db),
-        "plot_description":    _extract_plot_description(user_input),
-        "plot_keywords":       _extract_plot_keywords(user_input),
-        "liked_found":         liked_found,
-        "disliked_found":      disliked_found,
-        "liked_genres":        liked_genres,
-        "disliked_genres":     disliked_genres,
+        "genres_requested":     requested_genres,
+        "actors_requested":     _extract_actors(user_input, movie_db),
+        "directors_requested":  _extract_directors_regex(user_input, movie_db),
+        "plot_description":     _extract_plot_description(user_input),
+        "plot_keywords":        _extract_plot_keywords(user_input),
+        "liked_found":          liked_found,
+        "disliked_found":       disliked_found,
+        "liked_genres":         liked_genres,
+        "disliked_genres":      disliked_genres,
         "soft_disliked_genres": [],
-        "sentiment_last_recs": None,
-        "wants_different":     _check_wants_different(user_input),
-        "is_permanent":        is_permanent or bool(year_block),
+        "sentiment_last_recs":  None,
+        "wants_different":      _check_wants_different(user_input),
+        "is_permanent":         is_permanent or bool(year_block),
         "permanent_year_block": year_block,
         "permanent_genre_block": permanent_genre_block,
         "permanent_movie_block": permanent_movie_block,
-        "parse_method":        "regex",
+        "is_meta_query":        _is_meta_query(user_input),
+        "parse_method":         "regex",
     }
     return _postprocess_intent(result, user_input)
 
@@ -440,7 +462,8 @@ JSON schema (return ALL keys, even if empty/null):
   "is_permanent":           false,
   "permanent_year_block":   null,
   "permanent_genre_block":  [],
-  "permanent_movie_block":  []
+  "permanent_movie_block":  [],
+  "is_meta_query":          false
 }
 
 PERMANENT UNLEARNING SIGNALS — set is_permanent=true when user explicitly demands erasure with words like:
@@ -513,6 +536,13 @@ disliked_found — titles user expressed NEGATIVE sentiment about:
 
 sentiment_last_recs — overall feeling about the LAST SHOWN RECOMMENDATIONS batch:
   "positive", "negative", "neutral", or null
+
+is_meta_query — true when the user is asking about THEIR OWN STATE or HOW THE SYSTEM WORKS.
+  Examples that ARE meta queries (set true):
+    "what is my current mood?", "do you remember my profile?", "what have I liked?",
+    "what movies have I blocked?", "how does LightGCN work?", "what is my taste?"
+  Examples that are NOT meta queries (set false):
+    "I wanna cry" (mood expression), "recommend me something", "I liked Inception"
 
 wants_different — true only if user wants a fresh batch different from the last.
   "something different", "try again", "none of these", "can you do better"
@@ -606,18 +636,11 @@ def _has_positive_preference(text: str) -> bool:
 
 
 def _postprocess_intent(result: dict, user_input: str) -> dict:
-    """
-    Deterministic guardrails over LLM output.
-    LLM decides intent; this prevents stale context and missed state updates.
-    """
-    # Asking for a genre while saying "I like them" should persist preference.
     if _has_positive_preference(user_input):
         for genre in result.get("genres_requested", []):
             if genre not in result["liked_genres"]:
                 result["liked_genres"].append(genre)
 
-    # LLM often marks fresh topical requests as "wants different". Keep only
-    # explicit dissatisfaction or explicit ask for another batch.
     explicit_diff = _check_wants_different(user_input)
     if not explicit_diff and result.get("sentiment_last_recs") != "negative":
         result["wants_different"] = False
@@ -626,10 +649,6 @@ def _postprocess_intent(result: dict, user_input: str) -> dict:
 
 
 def _title_reference_is_grounded(raw_title: str, user_input: str, last_recs: list[str]) -> bool:
-    """
-    Reject stale LLM carryover from profile/history.
-    Accept only explicit title text or positional/deictic references to last recs.
-    """
     raw = raw_title.strip().lower()
     text = user_input.lower()
     if raw and (raw in text or text in raw):
@@ -675,61 +694,61 @@ def _llm_parse(
     prompt = _build_prompt(user_input, last_recs, history, state)
 
     resp = client.chat.completions.create(
-        model                = model,
-        messages             = [
+        model                 = model,
+        messages              = [
             {"role": "system", "content": _CLASSIFIER_SYSTEM},
             {"role": "user",   "content": prompt},
         ],
-        temperature          = 0,
-        max_completion_tokens= 600,
-        top_p                = 1,
-        stream               = False,
+        temperature           = 0,
+        max_completion_tokens = 600,
+        top_p                 = 1,
+        stream                = False,
     )
 
     raw = resp.choices[0].message.content.strip()
     raw = re.sub(r"^```(?:json)?\s*", "", raw)
     raw = re.sub(r"\s*```$",          "", raw)
-    parsed: dict = json.loads(raw)   # raises on bad JSON → caller falls back to regex
+    parsed: dict = json.loads(raw)
 
     result = {
-        "genres_requested":    _grounded_genres(
+        "genres_requested":     _grounded_genres(
             _canonicalize_genres(parsed.get("genres_requested", [])),
             user_input,
         ),
-        "actors_requested":    _canonical_people(
+        "actors_requested":     _canonical_people(
             parsed.get("actors_requested", []),
             movie_db, "cast_list", user_input,
         ),
-        "directors_requested": _canonical_people(
+        "directors_requested":  _canonical_people(
             parsed.get("directors_requested", []),
             movie_db, "directors_list", user_input,
         ),
-        "plot_description":    parsed.get("plot_description", "") or "",
-        "plot_keywords":       parsed.get("plot_keywords", []),
-        "liked_found":         [],
-        "disliked_found":      [],
-        "liked_genres":        _grounded_genres(
+        "plot_description":     parsed.get("plot_description", "") or "",
+        "plot_keywords":        parsed.get("plot_keywords", []),
+        "liked_found":          [],
+        "disliked_found":       [],
+        "liked_genres":         _grounded_genres(
             _canonicalize_genres(parsed.get("liked_genres", [])),
             user_input,
         ),
-        "disliked_genres":     _grounded_genres(
+        "disliked_genres":      _grounded_genres(
             _canonicalize_genres(parsed.get("disliked_genres", [])),
             user_input,
         ),
-        "sentiment_last_recs": parsed.get("sentiment_last_recs", None),
-        "wants_different":     bool(parsed.get("wants_different", False)),
+        "sentiment_last_recs":  parsed.get("sentiment_last_recs", None),
+        "wants_different":      bool(parsed.get("wants_different", False)),
         "soft_disliked_genres": _grounded_genres(
             _canonicalize_genres(parsed.get("soft_disliked_genres", [])),
             user_input,
         ),
-        "is_permanent":        bool(parsed.get("is_permanent", False)),
+        "is_permanent":         bool(parsed.get("is_permanent", False)),
         "permanent_year_block": parsed.get("permanent_year_block", None),
         "permanent_genre_block": _canonicalize_genres(parsed.get("permanent_genre_block", [])),
         "permanent_movie_block": parsed.get("permanent_movie_block", []),
-        "parse_method":        "llm",
+        "is_meta_query":        bool(parsed.get("is_meta_query", False)),
+        "parse_method":         "llm",
     }
 
-    # Negative genre intent wins. Avoid "fuck musicals" becoming request for Music.
     result["genres_requested"] = [
         genre for genre in result["genres_requested"]
         if genre not in result["disliked_genres"]
