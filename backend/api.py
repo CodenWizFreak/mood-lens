@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 load_dotenv()
 
-from llm_client import GeminiClient as Groq  # Gemini-backed shim, Groq-compatible surface
+from llm_client import GroqClient as Groq
 
 from state_manager import StateManager, save_state, load_state
 from intent_parser import parse_intent
@@ -50,9 +50,9 @@ EMBEDDINGS_CACHE  = _path("EMBEDDINGS_CACHE", "embeddings_cache.npy")
 LIGHTGCN_CKPT     = _path("LIGHTGCN_CHECKPOINT", "models/checkpoints/lightgcn_best.pt")
 EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "local")
 VOYAGE_API_KEY    = os.getenv("VOYAGE_API_KEY", "")
-GROQ_MODEL        = os.getenv("GEMINI_MODEL", os.getenv("GROQ_MODEL", "gemini-3.5-flash"))
-GROQ_TEMPERATURE  = float(os.getenv("GEMINI_TEMPERATURE", os.getenv("GROQ_TEMPERATURE", "0.8")))
-GROQ_MAX_TOKENS   = int(os.getenv("GEMINI_MAX_TOKENS", os.getenv("GROQ_MAX_TOKENS", "1024")))
+GROQ_MODEL        = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_TEMPERATURE  = float(os.getenv("GROQ_TEMPERATURE", "0.8"))
+GROQ_MAX_TOKENS   = int(os.getenv("GROQ_MAX_TOKENS", "1024"))
 TOP_N             = int(os.getenv("TOP_N_RESULTS", "5"))
 LIGHTGCN_ALPHA    = float(os.getenv("LIGHTGCN_ALPHA", "0.6"))
 
@@ -64,9 +64,9 @@ app_state: dict = {}
 async def lifespan(app: FastAPI):
     print("[API] Starting MoodLens backend …")
 
-    has_key = any(os.getenv(k) for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY"))
+    has_key = bool(os.getenv("GROQ_API_KEY"))
     if not has_key:
-        raise RuntimeError("Missing env var: set GEMINI_API_KEY (or GOOGLE_API_KEY).")
+        raise RuntimeError("Missing env var: set GROQ_API_KEY in backend/.env")
 
     app_state["groq_client"] = Groq()
 

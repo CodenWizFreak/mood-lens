@@ -16,7 +16,7 @@ This guide assumes a fresh clone with the TMDB CSVs already present in
 | Node.js     | 18+      | For the Next.js frontend                                           |
 | Disk        | ~1.5 GB  | TMDB CSVs (~ratings.csv is 700 MB) + embedding cache               |
 | RAM         | ≥ 8 GB   | LightGCN training peaks around 3 GB                                |
-| Gemini key  | required | https://aistudio.google.com/apikey → set `GEMINI_API_KEY` in `.env` |
+| Groq key    | required | https://console.groq.com → set `GROQ_API_KEY` in `.env`            |
 
 ---
 
@@ -38,14 +38,8 @@ pip install -r requirements.txt
 Edit `backend/.env`:
 
 ```bash
-# Primary LLM: Google Gemini (via the Groq-compatible shim in llm_client.py)
-GEMINI_API_KEY=AIza…your_key…
-GEMINI_MODEL=gemini-3.5-flash
-GEMINI_TEMPERATURE=0.8
-GEMINI_MAX_TOKENS=1024
-
-# Legacy Groq config — only read if Gemini is unset (kept for fallback)
-GROQ_API_KEY=
+# Groq LLM — get your free key at console.groq.com
+GROQ_API_KEY=gsk_...your_key...
 GROQ_MODEL=llama-3.1-8b-instant
 GROQ_TEMPERATURE=0.8
 GROQ_MAX_TOKENS=1024
@@ -264,9 +258,9 @@ GET  /greet               → opening greeting
 
 | Symptom                                       | Fix                                                                                                                |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `Missing env var: GEMINI_API_KEY`             | Edit `backend/.env`. Get a key at https://aistudio.google.com/apikey.                                              |
-| `404 model not found` from Gemini             | `gemini-3.5-flash` may not be live for your key — try `gemini-2.5-flash`, `gemini-2.0-flash`, or `gemini-1.5-flash`. |
-| `429` / TPM rate-limit from Gemini            | Free-tier quota hit — wait, or set `GEMINI_MODEL=gemini-2.0-flash` (higher RPM), or upgrade your key.              |
+| `Missing env var: GROQ_API_KEY`             | Edit `backend/.env`. Get a key at https://console.groq.com.                                              |
+| `404 model not found`                         | The model name may not be available for your Groq key tier — try `llama-3.3-70b-versatile` or `llama-3.2-1b-preview`. |
+| `429` / TPM rate-limit                        | Free-tier quota hit — wait a moment, or switch to `GROQ_MODEL=llama-3.2-1b-preview` (higher RPM on free tier).       |
 | `LightGCN checkpoint not found`               | Run `python backend/models/train_lightgcn.py --quick` (then full training when ready).                            |
 | `/permanent-unlearn` returns 503              | Same as above — checkpoint required.                                                                              |
 | `embeddings_cache.npy` rebuilds every boot    | The cache size mismatch happens after dataset changes; delete the stale `.npy` and let it rebuild once.            |
