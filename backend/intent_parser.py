@@ -25,7 +25,7 @@ import re
 import json
 import logging
 import pandas as pd
-from llm_client import GeminiClient as Groq  # Gemini-backed shim
+from llm_client import GroqClient as Groq
 
 logger = logging.getLogger(__name__)
 

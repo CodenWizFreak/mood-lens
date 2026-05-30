@@ -1,7 +1,8 @@
-# GNN Movie Recommender — Full Stack Setup
+# MoodLens — Conversational Movie Recommender with Machine Unlearning
 
-A conversational movie recommendation system with machine unlearning (Graph Eraser),
-powered by a Groq LLM backend and a Next.js glassmorphism frontend with a live GNN visualizer.
+A full-stack movie recommendation system where you talk to an AI that learns your taste, forgets what you hate, and lets you explore moods without permanently changing your profile.
+
+Powered by **LightGCN graph embeddings**, **GNNDelete** (Tier 1 permanent unlearning), **Influence Functions** (Tier 2 session unlearning), and a **Groq LLM** backend with a live graph visualizer.
 
 ---
 
@@ -9,42 +10,42 @@ powered by a Groq LLM backend and a Next.js glassmorphism frontend with a live G
 
 ```
 project/
-├── backend/               ← Python FastAPI server
-│   ├── api.py             ← FastAPI app (NEW — main entry point)
-│   ├── main.py            ← Original CLI entrypoint (unchanged)
-│   ├── intent_parser.py
-│   ├── scoring_engine.py
-│   ├── state_manager.py
-│   ├── embedder.py
-│   ├── display.py
+├── backend/                    ← Python FastAPI server
+│   ├── api.py                  ← Main FastAPI entry point
+│   ├── main.py                 ← Legacy CLI entry point
+│   ├── llm_client.py           ← Groq client wrapper
+│   ├── intent_parser.py        ← LLM-first intent classification
+│   ├── scoring_engine.py       ← Hybrid LightGCN + Bayesian scorer
+│   ├── state_manager.py        ← Two-tier memory coordinator
+│   ├── embedder.py             ← Sentence-transformer plot embeddings
+│   ├── graph/
+│   │   ├── preference_graph.py ← Permanent taste graph
+│   │   ├── session_graph.py    ← Ephemeral mood session graph
+│   │   └── graph_builder.py    ← Merges both graphs for the visualizer
+│   ├── models/
+│   │   ├── lightgcn.py         ← LightGCN implementation
+│   │   ├── gnn_delete.py       ← Tier 1: GNNDelete permanent unlearning
+│   │   ├── influence.py        ← Tier 2: Influence function session unlearning
+│   │   └── train_lightgcn.py   ← Training script
 │   ├── requirements.txt
-│   ├── .env               ← copy from .env.example and fill in
-│   ├── .env.example
-│   ├── user_state.json    ← persisted user preference graph
+│   ├── .env.example            ← Copy this to .env and fill in your keys
 │   └── data/
 │       ├── movies_metadata.csv
 │       ├── credits.csv
 │       └── ratings.csv
 │
-└── frontend/              ← Next.js 14 App Router
+└── frontend/                   ← Next.js 14 App Router
     ├── app/
-    │   ├── chat/page.tsx           ← main chat UI (updated)
-    │   ├── api/
-    │   │   ├── chat/route.ts       ← proxies to Python SSE stream
-    │   │   ├── graph/route.ts      ← fetches GNN graph data
-    │   │   ├── greet/route.ts      ← gets greeting from bot
-    │   │   ├── state/route.ts      ← fetches user state
-    │   │   └── reset/route.ts      ← resets conversation + state
-    │   └── ...
+    │   ├── chat/page.tsx       ← Main chat UI
+    │   └── api/                ← Next.js route handlers (proxy to Python)
     ├── components/
     │   ├── chat/
-    │   │   ├── ChatWindow.tsx      ← updated (uses local ChatMessage type)
-    │   │   ├── ChatInput.tsx       ← unchanged
-    │   │   ├── MessageBubble.tsx   ← updated (uses local ChatMessage type)
-    │   │   └── GnnVisualizer.tsx   ← NEW — live force-directed GNN graph
-    │   └── ui/                     ← unchanged glass UI components
-    ├── .env.local                  ← BACKEND_URL=http://localhost:8000
-    └── ...
+    │   │   ├── GnnVisualizer.tsx    ← Live memory map graph
+    │   │   ├── UnlearningPanel.tsx  ← Memory surgery log
+    │   │   ├── EmbeddingDriftChart.tsx
+    │   │   └── NewMoodButton.tsx
+    │   └── ui/                 ← Glass UI components
+    └── .env.local              ← BACKEND_URL=http://localhost:8000
 ```
 
 ---
@@ -56,37 +57,28 @@ project/
 ```bash
 cd backend
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
+# Create virtual environment (recommended)
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
 
 # Configure environment
 cp .env.example .env
-# Edit .env — set your GROQ_API_KEY and GROQ_MODEL
+# Edit .env — set your GROQ_API_KEY (free at console.groq.com)
 
-# Start FastAPI server
+# Start the server
 uvicorn api:app --reload --port 8000
 ```
 
-The first startup takes ~30–60 seconds to:
-- Load the movie database (~45k movies)
-- Build/load the plot embedding index
-- Initialize user state
-
-You'll see `[API] Ready ✓` when it's done.
+First startup takes ~30–60 seconds to load the movie database and build the embedding index. You'll see `[API] Ready ✓` when done.
 
 ### 2. Frontend
 
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Start dev server
 npm run dev
 ```
 
@@ -99,18 +91,25 @@ Open http://localhost:3000/chat
 ### Backend `.env`
 
 ```env
-# Required
-GROQ_API_KEY=gsk_...              # Get from console.groq.com
-GROQ_MODEL=llama-3.1-8b-instant   # or llama-3.3-70b-versatile
+# Required — get your free key at console.groq.com
+GROQ_API_KEY=gsk_...
 
-# Optional
+# Model choice (llama-3.1-8b-instant is the recommended default)
+GROQ_MODEL=llama-3.1-8b-instant
 GROQ_TEMPERATURE=0.8
 GROQ_MAX_TOKENS=1024
-TOP_N_RESULTS=5
-EMBEDDING_BACKEND=local           # "local" uses sentence-transformers
-STATE_FILE=user_state.json
+
+# Dataset paths (relative to backend/)
+METADATA_CSV=data/movies_metadata.csv
+CREDITS_CSV=data/credits.csv
+RATINGS_CSV=data/ratings.csv
+
+# Embedding backend ("local" is free, uses sentence-transformers)
+EMBEDDING_BACKEND=local
 EMBEDDINGS_CACHE=embeddings_cache.npy
 ```
+
+See `.env.example` for the full list including LightGCN paths.
 
 ### Frontend `.env.local`
 
@@ -122,88 +121,80 @@ BACKEND_URL=http://localhost:8000
 
 ## How It Works
 
+### Two-Tier Memory System
+
+| Tier | Trigger | What it does |
+|------|---------|--------------|
+| **Tier 1 — Permanent** | "Block X forever", "never recommend horror" | GNNDelete modifies the LightGCN model weights. That movie/genre is carved out of the embedding space. |
+| **Tier 2 — Session** | "New Mood" → Forget / Keep | Influence Functions either roll back or commit the current session signals into the permanent checkpoint. |
+
+### Node Types in the Graph Visualizer
+
+| Node color | Meaning |
+|------------|---------|
+| 🟢 Green | You (center node) |
+| 🟡 Amber | Session movies (temporary mood) |
+| 🔵 Blue | Permanent likes (long-term taste) |
+| 🟣 Purple | Genre bridge nodes |
+| 🔴 Red | Disliked or permanently blocked |
+
 ### Chat Flow
 
-1. User types a message in the frontend
-2. Next.js `/api/chat` route POSTs `{ message }` to Python `/chat`
-3. Python backend:
-   - Parses intent (LLM-first with Groq, regex fallback)
-   - Updates user preference graph (likes/dislikes/genres)
-   - Scores and ranks movies using the hybrid scoring engine
-   - Streams the Groq response token-by-token via SSE
-   - Sends a final `graph` event with updated GNN data
-4. Frontend streams tokens into the chat bubble in real time
-5. Graph visualizer updates automatically after each message
-
-### SSE Event Format
-
-```
-data: {"type": "token", "content": "Here are"}
-data: {"type": "token", "content": " my top picks..."}
-data: {"type": "graph", "data": { nodes: [...], edges: [...] }}
-data: {"type": "done"}
-```
-
-### GNN Visualizer
-
-Click **"See Live Visualizer"** above the chat to open an overlay with a force-directed graph showing:
-
-| Node type   | Color  | Meaning                          |
-|-------------|--------|----------------------------------|
-| User        | Green  | You (center node)                |
-| Recommended | Purple | Movies recommended this session  |
-| Liked       | Blue   | Movies you said you liked        |
-| Erased      | Red    | Movies erased by Graph Eraser    |
-| Genre       | Amber  | Genre nodes with weights         |
-
-Edge weights show recommendation scores. Erased nodes appear with a red strikethrough.
-
-Controls: scroll to zoom, drag to pan, hover nodes for details.
+1. You type a message
+2. Intent parser classifies it (LLM at temp=0, regex fallback)
+3. Preference/session graph updates
+4. LightGCN + Bayesian scorer ranks movies
+5. Groq LLM streams the response token-by-token
+6. Graph visualizer updates live
 
 ---
 
-## Machine Unlearning (Graph Eraser)
+## Machine Unlearning — Example Phrases
 
-Tell the bot things like:
-- "I hate Conjuring 2, forget it"
+**Soft dislike (session filter, red node):**
+- "I don't like Opening Night"
+- "Harold and Maude isn't for me"
+
+**Permanent block (GNNDelete, model weight update):**
+- "Block Amadeus"
 - "Never recommend horror again"
-- "I dislike The Emoji Movie"
+- "BLOCK COMEDY GENRE"
 
-The system will:
-1. Remove the movie/genre from your preference graph
-2. Decay the genre weights in the scoring engine
-3. Exclude the movie/franchise from all future recommendations
-4. Update the GNN visualizer to show the erased node in red
+**Session mood boundary:**
+- Click **New Mood** → choose **Forget** (rollback) or **Keep in my Profile** (commit)
 
 ---
 
 ## API Endpoints
 
-| Method | Path     | Description                          |
-|--------|----------|--------------------------------------|
-| GET    | /health  | Backend health check                 |
-| GET    | /state   | Current user preference state        |
-| GET    | /graph   | GNN graph data for visualizer        |
-| GET    | /greet   | Get initial greeting from bot        |
-| POST   | /chat    | Send message, receive SSE stream     |
-| POST   | /reset   | Reset all state and conversation     |
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /health | Backend health + LightGCN status |
+| GET | /state | Full user preference state |
+| GET | /graph | Graph viz payload |
+| GET | /greet | Opening greeting |
+| GET | /session | Current session info |
+| GET | /embedding-drift | Drift history for the timeline chart |
+| POST | /chat | Send message → SSE stream |
+| POST | /new-mood | End session (discard or commit) |
+| POST | /reset | Full state reset |
 
 ---
 
 ## Troubleshooting
 
-**Backend not starting:**
-- Check `GROQ_API_KEY` and `GROQ_MODEL` are set in `.env`
-- Ensure `data/movies_metadata.csv`, `credits.csv`, `ratings.csv` exist
+**Backend won't start:**
+- Make sure `GROQ_API_KEY` is set in `backend/.env`
+- Verify the three CSV files exist in `backend/data/`
 
-**"Backend Offline" shown in frontend:**
-- Make sure the Python server is running on port 8000
-- Check CORS is not blocked (it's configured for `localhost:3000`)
+**"Backend Offline" in the UI:**
+- Python server must be running on port 8000
+- Frontend must be on port 3000 (CORS is configured for this)
 
-**Embeddings slow on first run:**
-- First run builds a `embeddings_cache.npy` file — subsequent runs are fast
-- Set `EMBEDDING_BACKEND=local` to use the free local sentence-transformers model
+**Slow first startup:**
+- Normal — it's building the plot embedding cache (`embeddings_cache.npy`)
+- Subsequent starts are fast
 
-**Graph visualizer empty:**
-- It populates after your first chat message that returns recommendations
-- Ask "recommend me a movie" to populate it
+**Recommendations not showing:**
+- Train LightGCN first: `python models/train_lightgcn.py --quick`
+- Without the checkpoint, the system falls back to Bayesian scoring (still works)
